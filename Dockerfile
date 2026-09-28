@@ -1,3 +1,3 @@
-FROM whyour/qinglong:2.22.0-debian
-EXPOSE 5700
-ENTRYPOINT ["./docker/docker-entrypoint.sh"]
+FROM ghcr.io/engigu/baihu:latest
+
+EXPOSE 8052
