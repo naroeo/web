@@ -187,8 +187,8 @@ jobs:
           push: true
 
           tags: |
-            ghcr.io/${{ steps.lower-repo.outputs.repository }}/qinglong:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/qinglong:latest
+            ghcr.io/${{ steps.lower-repo.outputs.repository }}/dwfiona:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/dwfiona:latest
 
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
