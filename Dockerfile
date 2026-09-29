@@ -1,4 +1,4 @@
-FROM whyour/qinglong:2.22.0-debian
+FROM whyour/qinglong:debian
 
 
 LABEL maintainer="winijesen"
