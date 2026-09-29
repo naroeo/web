@@ -1,7 +1,5 @@
 FROM whyour/qinglong:debian
 
-LABEL maintainer="winijesen"
-
 USER root
 
 # 安装依赖
