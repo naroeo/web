@@ -1,11 +1,9 @@
 name: Build and Push QingLong Docker Image
 
 on:
-  # 每天 03:00 UTC 自动检查上游 QingLong 镜像
   schedule:
     - cron: "0 3 * * *"
 
-  # 允许手动构建
   workflow_dispatch:
 
 jobs:
@@ -17,17 +15,20 @@ jobs:
       packages: write
 
     steps:
-      # --------------------------------------------------
-      # 1. Checkout
-      # --------------------------------------------------
+
+      # ============================================================
+      # Checkout
+      # ============================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      # --------------------------------------------------
-      # 2. 登录 GHCR
-      # --------------------------------------------------
+      # ============================================================
+      # Login to GHCR
+      # ============================================================
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -35,37 +36,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --------------------------------------------------
-      # 3. 登录 Docker Hub
-      # --------------------------------------------------
+      # ============================================================
+      # Login to Docker Hub
+      # ============================================================
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # --------------------------------------------------
-      # 4. 设置 Docker Buildx
-      # --------------------------------------------------
+      # ============================================================
+      # Docker Buildx
+      # ============================================================
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # --------------------------------------------------
-      # 5. 检查上游 QingLong 镜像
-      # --------------------------------------------------
+      # ============================================================
+      # Check upstream QingLong digest
+      # ============================================================
+
       - name: Check upstream QingLong image
         id: check
         shell: bash
         run: |
           set -e
 
-          IMAGE="whyour/qinglong:debian"
+          IMAGE="whyour/qinglong"
+          TAG="debian"
 
-          echo "Checking upstream image: $IMAGE"
+          echo "Checking upstream image: ${IMAGE}:${TAG}"
 
+          # Get Docker Hub registry token
+          TOKEN="$(
+            curl -fsSL \
+              "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${IMAGE}:pull" \
+              | jq -r '.token'
+          )"
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "ERROR: Failed to get Docker Hub registry token."
+            exit 1
+          fi
+
+          echo "Docker Hub registry token acquired."
+
+          # Get current manifest digest
           CURRENT_DIGEST="$(
-            docker buildx imagetools inspect "$IMAGE" \
-            | awk '/^Digest:/ {print $2; exit}'
+            curl -fsSI \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.oci.image.index.v1+json" \
+              -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+              "https://registry-1.docker.io/v2/${IMAGE}/manifests/${TAG}" \
+              | awk -F': ' 'tolower($1) == "docker-content-digest" {print $2}' \
+              | tr -d '\r' \
+              | head -n1
           )"
 
           if [ -z "$CURRENT_DIGEST" ]; then
@@ -75,13 +101,14 @@ jobs:
 
           echo "Current digest: $CURRENT_DIGEST"
 
+          # Read previously recorded digest
           OLD_DIGEST=""
 
           if [ -f .github/qinglong-base-digest.txt ]; then
             OLD_DIGEST="$(
               sed -n 's/^DIGEST=//p' \
-              .github/qinglong-base-digest.txt \
-              | head -n1
+                .github/qinglong-base-digest.txt \
+                | head -n1
             )"
           fi
 
@@ -89,17 +116,29 @@ jobs:
 
           echo "digest=$CURRENT_DIGEST" >> "$GITHUB_OUTPUT"
 
+          # Compare digests
           if [ "$CURRENT_DIGEST" = "$OLD_DIGEST" ]; then
+
             echo "changed=false" >> "$GITHUB_OUTPUT"
+
+            echo "======================================"
             echo "Upstream QingLong image has NOT changed."
+            echo "======================================"
+
           else
+
             echo "changed=true" >> "$GITHUB_OUTPUT"
+
+            echo "======================================"
             echo "Upstream QingLong image has CHANGED."
+            echo "======================================"
+
           fi
 
-      # --------------------------------------------------
-      # 6. 获取上游 QingLong 版本
-      # --------------------------------------------------
+      # ============================================================
+      # Get upstream QingLong version
+      # ============================================================
+
       - name: Get upstream QingLong version
         id: version
         if: steps.check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
@@ -116,29 +155,29 @@ jobs:
 
           if [ -z "$VERSION" ]; then
             VERSION="unknown"
+
+          elif [[ "$VERSION" != v* ]]; then
+            VERSION="v$VERSION"
           fi
 
           echo "Upstream QingLong version: $VERSION"
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # --------------------------------------------------
-      # 7. 获取小写仓库名称
-      # --------------------------------------------------
+      # ============================================================
+      # Lowercase repository name
+      # ============================================================
+
       - name: Set lowercase repository name
         id: lower-repo
         shell: bash
         run: |
           echo "repository=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # --------------------------------------------------
-      # 8. 构建并推送
-      #
-      # 自动运行：
-      #   只有上游 digest 变化才构建
-      #
-      # 手动运行：
-      #   直接构建
-      # --------------------------------------------------
+      # ============================================================
+      # Build and Push
+      # ============================================================
+
       - name: Build and push Docker image
         if: steps.check.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
@@ -148,8 +187,8 @@ jobs:
           push: true
 
           tags: |
-            ghcr.io/${{ steps.lower-repo.outputs.repository }}/dwlove:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/dwlove:latest
+            ghcr.io/${{ steps.lower-repo.outputs.repository }}/qinglong:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/qinglong:latest
 
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -159,9 +198,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --------------------------------------------------
-      # 9. 更新版本记录
-      # --------------------------------------------------
+      # ============================================================
+      # Update upstream digest record
+      # ============================================================
+
       - name: Update upstream digest record
         if: steps.check.outputs.changed == 'true'
         shell: bash
@@ -180,12 +220,16 @@ jobs:
           UPDATED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           EOF
 
-          echo "Updated .github/qinglong-base-digest.txt:"
+          echo "======================================"
+          echo "Updated digest record:"
+          echo "======================================"
+
           cat .github/qinglong-base-digest.txt
 
-      # --------------------------------------------------
-      # 10. 提交版本记录
-      # --------------------------------------------------
+      # ============================================================
+      # Commit digest record
+      # ============================================================
+
       - name: Commit digest record
         if: steps.check.outputs.changed == 'true'
         shell: bash
